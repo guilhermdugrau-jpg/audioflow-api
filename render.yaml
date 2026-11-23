@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: audioflow-api
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      # Sem ffmpeg no plano free: entrega o áudio nativo (M4A/WebM).
+      - key: AUDIOFLOW_DISABLE_FFMPEG
+        value: "1"
+      - key: AUDIOFLOW_MAX_TRACKS
+        value: "50"
+      - key: AUDIOFLOW_MAX_QUEUE
+        value: "10"
+      - key: AUDIOFLOW_JOBS_PER_HOUR
+        value: "5"
+      - key: AUDIOFLOW_MAX_CONCURRENT
+        value: "1"
+      - key: AUDIOFLOW_FILE_TTL_MIN
+        value: "30"
+      # Troque "*" pela URL do Cloudflare Pages quando o site estiver no ar.
+      - key: AUDIOFLOW_ALLOWED_ORIGINS
+        value: "*"

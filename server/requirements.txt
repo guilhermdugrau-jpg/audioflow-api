@@ -1,0 +1,1 @@
+# Sem dependências externas — o servidor de beacon usa apenas a stdlib do Python.

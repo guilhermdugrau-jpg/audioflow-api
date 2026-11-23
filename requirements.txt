@@ -1,0 +1,5 @@
+requests>=2.31
+yt-dlp>=2024.4.9
+mutagen>=1.47.0
+pywebview>=6.0
+cryptography>=42.0
