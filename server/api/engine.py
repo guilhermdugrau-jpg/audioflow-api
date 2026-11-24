@@ -160,6 +160,9 @@ class Manager:
     # --- cotas -------------------------------------------------------------
 
     def _allow(self, ip: str) -> bool:
+        # AUDIOFLOW_JOBS_PER_HOUR=0 desliga a cota (sem limite por hora).
+        if JOBS_PER_HOUR <= 0:
+            return True
         now = time.time()
         with self._rate_lock:
             hits = [t for t in self._rate.get(ip, []) if now - t < 3600]
@@ -180,9 +183,12 @@ class Manager:
             if session.busy:
                 raise RuntimeError("Já existe um download em andamento nesta sessão.")
             if not self._allow(ip):
-                raise RuntimeError(
-                    f"Limite de {JOBS_PER_HOUR} downloads por hora. Tente novamente mais tarde."
+                msg = (
+                    "Limite de downloads por hora atingido. Tente novamente mais tarde."
+                    if JOBS_PER_HOUR > 0
+                    else f"Limite de {JOBS_PER_HOUR} downloads por hora. Tente novamente mais tarde."
                 )
+                raise RuntimeError(msg)
 
             with self._jobs_lock:
                 if self._jobs_active >= MAX_QUEUE:

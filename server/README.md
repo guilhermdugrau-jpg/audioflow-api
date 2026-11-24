@@ -62,7 +62,7 @@ Abra `http://127.0.0.1:8000` — o próprio FastAPI serve o frontend de
 | `AUDIOFLOW_DISABLE_FFMPEG` | `1` no `render.yaml` | entrega áudio nativo, sem transcode |
 | `AUDIOFLOW_MAX_TRACKS` | `50` | limite de faixas por link |
 | `AUDIOFLOW_MAX_QUEUE` | `10` | downloads esperando + rodando |
-| `AUDIOFLOW_JOBS_PER_HOUR` | `5` | cota por IP |
+| `AUDIOFLOW_JOBS_PER_HOUR` | `5` | cota por IP (`0` = sem limite) |
 | `AUDIOFLOW_MAX_CONCURRENT` | `1` | downloads simultâneos |
 | `AUDIOFLOW_MAX_SESSIONS` | `500` | teto de sessões em memória |
 | `AUDIOFLOW_FILE_TTL_MIN` | `30` | tempo até apagar os arquivos |
