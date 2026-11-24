@@ -4,8 +4,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-# ffmpeg para conversão de áudio (MP3/FLAC/WAV). Imagem slim não tem.
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+# ffmpeg para conversão de áudio (MP3/FLAC/WAV) e espeak-ng para TTS no Linux
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg espeak-ng \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
