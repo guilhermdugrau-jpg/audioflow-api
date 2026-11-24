@@ -261,16 +261,44 @@ class DownloadEngine:
 
         fmt = self.audio_format
         base, _ = os.path.splitext(dest_path)
+
+        # Cookies opcionais (JSON do Chrome/Edge exportado via extensão)
+        cookies_file = os.environ.get("YTDLP_COOKIES_FILE")
+        if cookies_file and os.path.exists(cookies_file):
+            opts["cookiefile"] = cookies_file
+        # Cookies via variável de ambiente (conteúdo do cookies.txt)
+        cookies_text = os.environ.get("YTDLP_COOKIES")
+        if cookies_text:
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as cf:
+                cf.write(cookies_text)
+                cookies_file = cf.name
+                opts["cookiefile"] = cookies_file
+
         opts: dict = {
             "format": "bestaudio/best" if ffmpeg else "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio",
             "quiet": True,
             "no_warnings": True,
             "outtmpl": base + ".%(ext)s",
             "retries": 5,
-            "socket_timeout": 15,
+            "socket_timeout": 30,
             "concurrent_fragment_downloads": 4,
             "ignoreerrors": True,
             "logger": _YtdlpLog(),
+            # Anti-detecção: headers de navegador real
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate",
+                "DNT": "1",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+            },
+            # Reduz throttling
+            "throttled_rate": "100K",
+            "sleep_interval": 1,
+            "max_sleep_interval": 3,
         }
         try:
             import certifi
@@ -289,7 +317,44 @@ class DownloadEngine:
                 opts["postprocessor_args"] = {"extractaudio": ["-ar", self.sample_rate]}
 
         expected = base + "." + fmt
-        variants = [opts, {**opts, "extractor_args": {"youtube": {"player_client": ["android", "ios", "tv"]}}}]
+
+        # Múltiplas estratégias de player_client (ordem: mais resistentes primeiro)
+        player_clients = [
+            ["web"],                    # Mais resistente a bot detection
+            ["android", "web"],         # Combo comum
+            ["ios", "web"],             # iOS + web
+            ["tv", "web"],              # Smart TV + web
+            ["android", "ios", "tv"],   # Fallback original
+        ]
+
+        # Estratégias de extractor_args
+        extractor_strategies = []
+        for pc in player_clients:
+            extractor_strategies.append({
+                "youtube": {
+                    "player_client": pc,
+                    "player_skip": ["configs", "webpage"],  # Pula algumas verificações
+                    "skip": ["hls", "dash"],  # Evita formatos problemáticos
+                }
+            })
+
+        # Variantes: cada estratégia de player + fallback sem extractor_args
+        variants = [opts]
+        for strat in extractor_strategies:
+            variants.append({**opts, "extractor_args": strat})
+
+        # Fallback: Invidious instances (bypass YouTube direto)
+        invidious_instances = [
+            "https://yewtu.be",
+            "https://invidious.snopyta.org",
+            "https://invidious.projectsegfau.lt",
+        ]
+        for inst in invidious_instances:
+            variants.append({
+                **opts,
+                "extractor_args": {"youtube": {"player_client": ["web"]}},
+                "source_address": inst,  # Tenta via instância Invidious
+            })
 
         def _produced() -> str | None:
             if ffmpeg:
@@ -299,15 +364,19 @@ class DownloadEngine:
             return max(hits, key=os.path.getmtime) if hits else None
 
         try:
-            for variant in variants:
+            for i, variant in enumerate(variants):
                 ytlog = _YtdlpLog()
-                with YoutubeDL({**variant, "logger": ytlog}) as ydl:
-                    ydl.extract_info(video_url, download=True)
+                try:
+                    with YoutubeDL({**variant, "logger": ytlog}) as ydl:
+                        ydl.extract_info(video_url, download=True)
+                except Exception as exc:
+                    log.warning("variante %d falhou para %s: %s", i, video_url, str(exc)[:150])
+                    continue
                 produced = _produced()
                 if produced:
                     return produced
                 reason = (ytlog.last_error or "sem erro relatado pelo yt-dlp").strip()
-                log.warning("tentativa sem arquivo para %s: %s", video_url, reason[:200])
+                log.warning("tentativa %d sem arquivo para %s: %s", i, video_url, reason[:200])
         except Exception as exc:
             log.warning("download falhou para %s: %s", video_url, str(exc)[:200])
         return None
