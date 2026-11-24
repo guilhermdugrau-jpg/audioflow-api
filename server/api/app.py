@@ -19,6 +19,7 @@ import hashlib
 import logging
 import mimetypes
 import os
+import re
 import secrets
 import tempfile
 import zipfile
@@ -199,6 +200,10 @@ def download_file(
 def download_zip(sid: str, job: str, request: Request, token: str | None = None):
     _check_auth(request, token)
     folder = _safe_job(sid, job)
+    # pega o nome do job da sessão
+    session = manager.session(sid)
+    job_name = getattr(session, "job_name", None)
+    safe_name = re.sub(r"[^A-Za-z0-9 _\-]", "", job_name or "audioflow").strip() or "audioflow"
     tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
     tmp.close()
     try:
@@ -209,7 +214,7 @@ def download_zip(sid: str, job: str, request: Request, token: str | None = None)
         return FileResponse(
             tmp.name,
             media_type="application/zip",
-            filename=f"audioflow-{job}.zip",
+            filename=f"{safe_name}.zip",
             background=BackgroundTask(os.unlink, tmp.name),
         )
     except Exception:

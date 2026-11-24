@@ -114,6 +114,7 @@ class Session:
     meta_cache: dict[str, object] = field(default_factory=dict)
     cancelled: bool = False
     finished_at: float | None = None
+    job_name: str | None = None
 
     @property
     def busy(self) -> bool:
@@ -263,6 +264,19 @@ class Manager:
                 )
                 session.engine = engine
                 self._wire(session, engine)
+
+                # define nome do job baseado no link (álbum/playlist/faixa)
+                try:
+                    kind, item_id = parse_spotify_url(url)
+                    client = SpotifyClient()
+                    if kind == "track":
+                        track = client.get_track(item_id)
+                        session.job_name = f"{track.artists} - {track.title}"
+                    else:
+                        meta = client.get_collection_metadata(item_id, kind)
+                        session.job_name = meta.name or "Coleção"
+                except Exception:
+                    session.job_name = "AudioFlow"
 
                 session.emit({
                     "type": "queued",
