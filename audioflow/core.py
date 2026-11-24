@@ -276,7 +276,7 @@ class DownloadEngine:
                 opts["cookiefile"] = cookies_file
 
         opts: dict = {
-            "format": "bestaudio/best" if ffmpeg else "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio",
+            "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio[ext=mp4]/bestaudio/best",
             "quiet": True,
             "no_warnings": True,
             "outtmpl": base + ".%(ext)s",
@@ -284,6 +284,7 @@ class DownloadEngine:
             "socket_timeout": 30,
             "concurrent_fragment_downloads": 4,
             "ignoreerrors": True,
+            "ignore_no_formats_error": True,
             "logger": _YtdlpLog(),
             # Anti-detecção: headers de navegador real
             "http_headers": {
@@ -343,38 +344,42 @@ class DownloadEngine:
         for strat in extractor_strategies:
             variants.append({**opts, "extractor_args": strat})
 
-        # Fallback: Invidious instances (bypass YouTube direto)
+        # Fallback: Invidious instances (usando extractor_args correto)
         invidious_instances = [
             "https://yewtu.be",
             "https://invidious.snopyta.org",
             "https://invidious.projectsegfau.lt",
-            "https://invidious.nerdvpn.de",
-            "https://invidious.osi.kr",
         ]
         for inst in invidious_instances:
             variants.append({
                 **opts,
-                "extractor_args": {"youtube": {"player_client": ["web"]}},
-                "source_address": inst,
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["web"],
+                        "invidious_instance": inst,
+                    }
+                },
             })
 
-        # Fallback: Piped instances (outro frontend privacidade)
+        # Fallback: Piped instances (extractor correto)
         piped_instances = [
             "https://piped.video",
             "https://piped.kavin.rocks",
             "https://piped.adminforge.de",
-            "https://piped.rishimo.rocks",
         ]
         for inst in piped_instances:
             variants.append({
                 **opts,
-                "extractor_args": {"youtube": {"player_client": ["web"]}},
-                "source_address": inst,
+                "extractor_args": {
+                    "youtube": {
+                        "player_client": ["web"],
+                        "piped_instance": inst,
+                    }
+                },
             })
 
-        # Geo-bypass: tenta diferentes países
-        geo_countries = ["US", "BR", "DE", "JP", "SG"]
-        for country in geo_countries:
+        # Geo-bypass: tenta diferentes países (apenas os principais)
+        for country in ["US", "BR"]:
             variants.append({
                 **opts,
                 "extractor_args": {"youtube": {"player_client": ["web"]}},
@@ -405,6 +410,12 @@ class DownloadEngine:
                 }
             },
         })
+
+        # Fallback final: formato mais flexível (ignora erros de formato)
+        fallback_opts = {**opts}
+        fallback_opts["format"] = "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio[ext=mp4]/bestaudio"
+        fallback_opts["ignore_no_formats_error"] = True
+        variants.append(fallback_opts)
 
         def _produced() -> str | None:
             if ffmpeg:
