@@ -35,7 +35,7 @@ from audioflow.version import APP_VERSION
 log = logging.getLogger("audioflow.web")
 
 DATA_ROOT = Path(os.environ.get("AUDIOFLOW_DATA_DIR", "/tmp/audioflow"))
-FILE_TTL_S = int(os.environ.get("AUDIOFLOW_FILE_TTL_MIN", "30")) * 60
+FILE_TTL_S = int(os.environ.get("AUDIOFLOW_FILE_TTL_MIN", "3")) * 60
 MAX_TRACKS = int(os.environ.get("AUDIOFLOW_MAX_TRACKS", "50"))
 MAX_QUEUE = int(os.environ.get("AUDIOFLOW_MAX_QUEUE", "10"))
 JOBS_PER_HOUR = int(os.environ.get("AUDIOFLOW_JOBS_PER_HOUR", "5"))

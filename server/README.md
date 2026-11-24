@@ -8,7 +8,7 @@ estático no **Cloudflare Pages**.
 Cloudflare Pages  ──/api/call, /api/events──▶  Render (FastAPI + yt-dlp)
       (site)                                      │
                                                   └─ /tmp/audioflow/<sessão>/<job>
-                                                     arquivos expiram em 30 min
+                                                     arquivos expiram em 3 min
 ```
 
 ## Por que sem ffmpeg?
@@ -65,7 +65,7 @@ Abra `http://127.0.0.1:8000` — o próprio FastAPI serve o frontend de
 | `AUDIOFLOW_JOBS_PER_HOUR` | `5` | cota por IP (`0` = sem limite) |
 | `AUDIOFLOW_MAX_CONCURRENT` | `1` | downloads simultâneos |
 | `AUDIOFLOW_MAX_SESSIONS` | `500` | teto de sessões em memória |
-| `AUDIOFLOW_FILE_TTL_MIN` | `30` | tempo até apagar os arquivos |
+| `AUDIOFLOW_FILE_TTL_MIN` | `3` | tempo até apagar os arquivos |
 | `AUDIOFLOW_ALLOWED_ORIGINS` | `*` | origem(ns) do site, separadas por vírgula |
 | `AUDIOFLOW_API_TOKEN` | vazio | se definido, exige `Authorization: Bearer ...` |
 
