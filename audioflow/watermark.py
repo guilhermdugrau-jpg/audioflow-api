@@ -330,8 +330,14 @@ def apply_watermark(
     position: str = "middle",
     volume: float = 0.3,
     effects: list[str] | None = None,
+    repeat_every: float = 0.0,
+    repeat_count: int = 0,
 ) -> bool:
-    """Mistura a assinatura de voz na música (in-place). True em caso de sucesso."""
+    """Mistura a assinatura de voz na música (in-place).
+    - position: "start", "middle", "end" (usado se repeat_every=0)
+    - repeat_every: intervalo em segundos entre repetições (0 = apenas uma vez na position)
+    - repeat_count: máximo de repetições (0 = ilimitado até o fim da música)
+    """
     ffmpeg = _ffmpeg_cmd("ffmpeg")
     if not ffmpeg:
         log.error("ffmpeg não encontrado; assinatura de áudio indisponível")
@@ -351,12 +357,40 @@ def apply_watermark(
 
     music_ms = _duration_ms(music_path)
     voice_ms = _duration_ms(voice)
-    delay = _delay_ms(position, music_ms, voice_ms)
+    music_s = music_ms / 1000.0
+    voice_s = voice_ms / 1000.0
     vol = max(0.0, min(1.0, float(volume or 0)))
     chain = _effects_chain(effects)
-    voice_filter = f"[1:a]{chain}," if chain else "[1:a]"
-    voice_filter += f"volume={vol:.2f},adelay={delay}:all=1[voice]"
-    duck = _duck_filter(delay / 1000.0, (voice_ms / 1000.0) + DUCK_TAIL_S)
+    voice_base_filter = f"[1:a]{chain}," if chain else "[1:a]"
+    voice_base_filter += f"volume={vol:.2f}"
+
+    # Calcula os delays em ms
+    delays = []
+    if repeat_every > 0:
+        # primeira ocorrência na position pedida
+        first_delay = _delay_ms(position, music_ms, voice_ms)
+        delays.append(first_delay)
+        # repetições subsequentes
+        max_repeats = repeat_count if repeat_count > 0 else int(music_s / repeat_every) + 2
+        for i in range(1, max_repeats):
+            d = first_delay + int(i * repeat_every * 1000)
+            if d + voice_ms < music_ms:
+                delays.append(d)
+            else:
+                break
+    else:
+        delays.append(_delay_ms(position, music_ms, voice_ms))
+
+    # Monta o filter_complex com múltiplas vozes atrasadas
+    voice_filters = []
+    for idx, d in enumerate(delays):
+        label = f"voice{idx}"
+        voice_filters.append(f"{voice_base_filter},adelay={d}:all=1[{label}]")
+
+    duck = _duck_filter(delays[0] / 1000.0, voice_s + DUCK_TAIL_S)
+
+    voice_inputs = "".join(f"[{v}]" for v in [f"voice{i}" for i in range(len(delays))])
+    amix_inputs = len(delays) + 1
 
     tmp = music_path + ".wmtmp" + ext
     try:
@@ -365,8 +399,8 @@ def apply_watermark(
             "-i", music_path,
             "-i", voice,
             "-filter_complex",
-            f"{duck}[music];{voice_filter};"
-            f"[music][voice]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]",
+            f"{duck}[music];" + ";".join(voice_filters) + ";"
+            f"[music]{voice_inputs}amix=inputs={amix_inputs}:duration=first:dropout_transition=0:normalize=0[aout]",
             "-map", "[aout]",
             *codec,
             tmp,
@@ -378,8 +412,8 @@ def apply_watermark(
         if not os.path.exists(tmp):
             return False
         os.replace(tmp, music_path)
-        log.info("assinatura aplicada em %s (posição=%s, volume=%.2f, delay=%dms)",
-                 os.path.basename(music_path), position, vol, delay)
+        log.info("assinatura aplicada em %s (posição=%s, repeat_every=%.1fs, count=%d, volume=%.2f)",
+                 os.path.basename(music_path), position, repeat_every, len(delays), vol)
         return True
     except Exception:
         log.exception("falha ao aplicar a assinatura")

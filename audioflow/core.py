@@ -383,6 +383,8 @@ class DownloadEngine:
                 position=str(wm.get("position") or "middle"),
                 volume=float(wm.get("volume") or 0.3),
                 effects=wm.get("effects") or [],
+                repeat_every=float(wm.get("repeat_every") or 0.0),
+                repeat_count=int(wm.get("repeat_count") or 0),
             )
             if not ok:
                 log.warning("assinatura de áudio não aplicada em %s", os.path.basename(path))
