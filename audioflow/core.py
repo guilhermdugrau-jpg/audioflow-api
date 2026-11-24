@@ -348,13 +348,63 @@ class DownloadEngine:
             "https://yewtu.be",
             "https://invidious.snopyta.org",
             "https://invidious.projectsegfau.lt",
+            "https://invidious.nerdvpn.de",
+            "https://invidious.osi.kr",
         ]
         for inst in invidious_instances:
             variants.append({
                 **opts,
                 "extractor_args": {"youtube": {"player_client": ["web"]}},
-                "source_address": inst,  # Tenta via instância Invidious
+                "source_address": inst,
             })
+
+        # Fallback: Piped instances (outro frontend privacidade)
+        piped_instances = [
+            "https://piped.video",
+            "https://piped.kavin.rocks",
+            "https://piped.adminforge.de",
+            "https://piped.rishimo.rocks",
+        ]
+        for inst in piped_instances:
+            variants.append({
+                **opts,
+                "extractor_args": {"youtube": {"player_client": ["web"]}},
+                "source_address": inst,
+            })
+
+        # Geo-bypass: tenta diferentes países
+        geo_countries = ["US", "BR", "DE", "JP", "SG"]
+        for country in geo_countries:
+            variants.append({
+                **opts,
+                "extractor_args": {"youtube": {"player_client": ["web"]}},
+                "geo_bypass": True,
+                "geo_bypass_country": country,
+            })
+
+        # Estratégia: embed player (mais leve, menos verificação)
+        variants.append({
+            **opts,
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["web_embedded"],
+                    "player_skip": ["configs", "webpage"],
+                    "skip": ["hls", "dash"],
+                }
+            },
+        })
+
+        # Estratégia: mweb (mobile web) - às vezes menos restrito
+        variants.append({
+            **opts,
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["mweb"],
+                    "player_skip": ["configs", "webpage"],
+                    "skip": ["hls", "dash"],
+                }
+            },
+        })
 
         def _produced() -> str | None:
             if ffmpeg:
