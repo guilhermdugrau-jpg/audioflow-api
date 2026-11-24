@@ -20,6 +20,7 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from urllib.parse import quote
 
 from audioflow.core import DownloadEngine
 from audioflow.spotify_api import SpotifyClient, parse_spotify_url
+from audioflow.utils import FORMATS, QUALITIES, SAMPLE_RATES
 from audioflow.version import APP_VERSION
 
 log = logging.getLogger("audioflow.web")
@@ -39,6 +41,40 @@ MAX_QUEUE = int(os.environ.get("AUDIOFLOW_MAX_QUEUE", "10"))
 JOBS_PER_HOUR = int(os.environ.get("AUDIOFLOW_JOBS_PER_HOUR", "5"))
 MAX_CONCURRENT = max(1, int(os.environ.get("AUDIOFLOW_MAX_CONCURRENT", "1")))
 MAX_SESSIONS = max(10, int(os.environ.get("AUDIOFLOW_MAX_SESSIONS", "500")))
+
+# Conversão no servidor: ligue para permitir MP3/FLAC/WAV (exige ffmpeg na imagem).
+# Fica desligada por padrão para não gastar CPU/RAM em hospedagem gratuita.
+CONVERT = os.environ.get("AUDIOFLOW_ENABLE_CONVERT", "0") == "1"
+CONVERT_FORMATS = tuple(f for f in FORMATS if CONVERT or f in ("m4a", "opus"))
+_FFMPEG = shutil.which("ffmpeg")
+
+
+def _ffmpeg_available() -> bool:
+    return CONVERT and _FFMPEG is not None
+
+
+def _encode(src: Path, fmt: str, quality: str, sample_rate: str) -> Path:
+    """Transcodifica ``src`` para ``fmt`` com ffmpeg. Devolve o novo caminho."""
+    dest = src.with_suffix("." + fmt)
+    bitrate = quality if fmt in ("mp3", "m4a", "opus") else None
+    cmd = [_FFMPEG, "-y", "-loglevel", "error", "-i", str(src)]
+    if fmt == "mp3":
+        cmd += ["-c:a", "libmp3lame"]
+    elif fmt == "m4a":
+        cmd += ["-c:a", "aac"]
+    elif fmt == "opus":
+        cmd += ["-c:a", "libopus"]
+    elif fmt == "flac":
+        cmd += ["-c:a", "flac"]
+    elif fmt == "wav":
+        cmd += ["-c:a", "pcm_s16le"]
+    if bitrate:
+        cmd += ["-b:a", bitrate + "k"]
+    if sample_rate != "auto" and fmt in ("mp3", "flac", "wav"):
+        cmd += ["-ar", sample_rate]
+    cmd.append(str(dest))
+    subprocess.run(cmd, check=True, capture_output=True, timeout=900)
+    return dest
 
 SID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 JOB_RE = re.compile(r"^[a-f0-9]{8}$")
@@ -179,6 +215,17 @@ class Manager:
         # valida o link antes de enfileirar (erro rápido para o usuário)
         parse_spotify_url(url)
 
+        # define formato/qualidade do job (site escolhe; default = m4a/192/auto)
+        fmt = settings.get("format", "m4a")
+        if fmt not in CONVERT_FORMATS:
+            fmt = "m4a"
+        qual = str(settings.get("quality", "192"))
+        if qual not in QUALITIES:
+            qual = "192"
+        sr = settings.get("sample_rate", "auto")
+        if sr not in SAMPLE_RATES:
+            sr = "auto"
+
         with session.start_lock:
             if session.busy:
                 raise RuntimeError("Já existe um download em andamento nesta sessão.")
@@ -201,9 +248,15 @@ class Manager:
                 out_dir.mkdir(parents=True, exist_ok=True)
                 session.reset_job(job_id, out_dir)
 
+                # guarda no session para a thread de conversão
+                session.job_format = fmt
+                session.job_quality = qual
+                session.job_sample_rate = sr
+
                 engine = DownloadEngine(
-                    audio_format="m4a",
-                    audio_quality="192",
+                    audio_format=fmt,
+                    audio_quality=qual,
+                    sample_rate=sr,
                     include_track_number=bool(settings.get("tracknum")),
                     max_workers=1,
                     watermark={},
@@ -245,7 +298,15 @@ class Manager:
 
         def on_done(track, path) -> None:
             s.done += 1
-            self._add_file(s, self._file_entry(s, path))
+            entry = self._file_entry(s, path)
+            if entry and _ffmpeg_available() and s.job_format != "m4a":
+                s.emit({
+                    "type": "progress",
+                    "percent": _percent(s),
+                    "label": f"convertendo para {s.job_format.upper()}…",
+                })
+                entry = self._convert_entry(entry, s)
+            self._add_file(s, entry)
             s.emit({
                 "type": "track_ok",
                 "id": track.id,
@@ -263,7 +324,10 @@ class Manager:
 
         def on_skip(track, path) -> None:
             s.done += 1
-            self._add_file(s, self._file_entry(s, path))
+            entry = self._file_entry(s, path)
+            if entry and _ffmpeg_available() and s.job_format != "m4a":
+                entry = self._convert_entry(entry, s)
+            self._add_file(s, entry)
             s.emit({
                 "type": "track_skip",
                 "id": track.id,
@@ -382,9 +446,29 @@ class Manager:
                 "name": p.name,
                 "url": f"/api/files/{s.sid}/{s.job_id}/{quote(rel)}",
                 "size": p.stat().st_size,
+                "path": str(p),
+                "_rel": rel,
             }
         except (OSError, ValueError):
             return None
+
+    def _convert_entry(self, entry: dict, s: Session) -> dict | None:
+        """Transcodifica o arquivo do job para o formato escolhido no site."""
+        original = dict(entry)
+        try:
+            src = Path(entry["path"])
+            out = _encode(src, s.job_format, s.job_quality, s.job_sample_rate)
+            if out != src:
+                src.unlink(missing_ok=True)
+            return self._file_entry(s, str(out))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("conversão falhou: %s", exc)
+            s.emit({
+                "type": "progress",
+                "percent": _percent(s),
+                "label": "conversão falhou, mantendo original",
+            })
+            return self._file_entry(s, original["path"]) if original.get("path") else None
 
     @staticmethod
     def _add_file(s: Session, entry: dict | None) -> None:
@@ -493,9 +577,11 @@ class WebApi:
         return {
             "format": "m4a",
             "quality": 192,
+            "sample_rate": "auto",
             "folder": "",
             "tracknum": False,
             "platform": "web",
+            "convert_formats": list(CONVERT_FORMATS),
             "watermark": {
                 "enabled": False,
                 "text": "",
