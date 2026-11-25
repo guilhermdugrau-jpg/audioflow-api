@@ -41,6 +41,12 @@ from .engine import (
     Manager,
     WebApi,
 )
+from audioflow.watermark import (
+    DEFAULT_VOICE,
+    EFFECTS as WM_EFFECTS,
+    VOICE_PRESETS,
+    render_voice_preview,
+)
 
 log = logging.getLogger("audioflow.api")
 
@@ -194,6 +200,32 @@ def download_file(
         raise HTTPException(status_code=404, detail="not found")
     media = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
     return FileResponse(target, media_type=media, filename=target.name)
+
+
+@app.get("/api/watermark/preview")
+def watermark_preview(
+    text: str = "Lucas CDs",
+    voice: str = DEFAULT_VOICE,
+    effects: str = "",
+    volume: float = 0.45,
+):
+    """Gera (e cacheia) um MP3 curto só com a voz da assinatura."""
+    clean = re.sub(r"\s+", " ", text or "").strip()[:80] or "Lucas CDs"
+    voice_key = voice if voice in VOICE_PRESETS else DEFAULT_VOICE
+    eff = [e.strip() for e in (effects or "").split(",") if e.strip() in WM_EFFECTS][:4]
+    vol = max(0.05, min(1.0, float(volume or 0.45)))
+    key = hashlib.sha1(
+        f"{clean}|{voice_key}|{','.join(eff)}|{vol:.2f}".encode("utf-8", "replace")
+    ).hexdigest()[:16]
+    preview_dir = Path(tempfile.gettempdir()) / "audioflow-previews"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    out = preview_dir / f"{key}.mp3"
+    if not out.is_file() or out.stat().st_size < 1000:
+        tmp = render_voice_preview(clean, voice_key, eff, vol)
+        if not tmp:
+            raise HTTPException(status_code=503, detail="TTS indisponível no momento")
+        os.replace(tmp, out)
+    return FileResponse(out, media_type="audio/mpeg", filename="audioflow-assinatura.mp3")
 
 
 @app.get("/api/zip/{sid}/{job}")

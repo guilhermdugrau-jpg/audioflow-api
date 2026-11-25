@@ -260,7 +260,7 @@ class Manager:
                     sample_rate=sr,
                     include_track_number=bool(settings.get("tracknum")),
                     max_workers=1,
-                    watermark={},
+                    watermark=settings.get("watermark") or {},
                 )
                 session.engine = engine
                 self._wire(session, engine)
@@ -600,9 +600,9 @@ class WebApi:
                 "enabled": False,
                 "text": "",
                 "position": "middle",
-                "volume": 0.3,
+                "volume": 0.45,
                 "effects": [],
-                "voice": "tts",
+                "voice": "deep",
             },
         }
 
