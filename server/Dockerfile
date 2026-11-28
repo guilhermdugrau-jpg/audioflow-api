@@ -1,8 +1,10 @@
 FROM python:3.12-slim
 
+ARG BUILD_DATE=2026112705
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
+    BUILD_DATE=$BUILD_DATE \
     # PO Token Provider (bgutil) — roda em background na porta 4416
     POT_PROVIDER_HOST=127.0.0.1 \
     POT_PROVIDER_PORT=4416
