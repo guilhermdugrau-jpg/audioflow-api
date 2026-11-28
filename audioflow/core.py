@@ -306,9 +306,9 @@ class DownloadEngine:
         if cookies_file:
             opts["cookiefile"] = cookies_file
 
-        # PO Token Provider (bgutil) — roda em localhost:19999 no container Railway
+        # PO Token Provider (bgutil) — roda em localhost:4416 no container Railway
         pot_host = os.environ.get("POT_PROVIDER_HOST", "127.0.0.1")
-        pot_port = os.environ.get("POT_PROVIDER_PORT", "19999")
+        pot_port = os.environ.get("POT_PROVIDER_PORT", "4416")
         pot_url = f"http://{pot_host}:{pot_port}"
 
         try:
