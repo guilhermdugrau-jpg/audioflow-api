@@ -28,8 +28,8 @@ WORKDIR /app
 COPY server/api/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-# Script de entrypoint que sobe o PO token provider + uvicorn (copia antes para invalidar cache)
-COPY server/entrypoint.sh /app/entrypoint.sh
+# Script de entrypoint que sobe o PO token provider + uvicorn
+COPY server/entrypoint2.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 COPY audioflow /app/audioflow
