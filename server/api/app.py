@@ -3,6 +3,7 @@
 Endpoints:
     POST /api/call          {method, args} -> {ok, result} | {ok, error}
     GET  /api/events?since=N -> {seq, events}
+    GET  /api/search?q=...   -> busca pública (sem login) por nome
     GET  /api/files/{sid}/{job}/{path} -> arquivo
     GET  /api/zip/{sid}/{job}          -> todos os arquivos em .zip
     GET  /api/health        -> status
@@ -22,6 +23,8 @@ import os
 import re
 import secrets
 import tempfile
+import threading
+import time
 import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -47,6 +50,7 @@ from audioflow.watermark import (
     VOICE_PRESETS,
     render_voice_preview,
 )
+from audioflow import search_api
 
 log = logging.getLogger("audioflow.api")
 
@@ -59,6 +63,28 @@ ALLOWED_ORIGINS = [
 WEB_DIR = Path(__file__).resolve().parents[2] / "audioflow" / "web"
 
 manager = Manager()
+
+# Limite leve para a busca pública não martelar o catálogo externo.
+_SEARCH_HITS: dict[str, list[float]] = {}
+_SEARCH_LOCK = threading.Lock()
+SEARCH_PER_MIN = 40
+
+
+def _allow_search(ip: str) -> bool:
+    now = time.time()
+    with _SEARCH_LOCK:
+        if len(_SEARCH_HITS) > 2000:
+            for key in [
+                k for k, v in _SEARCH_HITS.items() if not v or now - v[-1] > 120
+            ]:
+                _SEARCH_HITS.pop(key, None)
+        hits = [t for t in _SEARCH_HITS.get(ip, []) if now - t < 60]
+        if len(hits) >= SEARCH_PER_MIN:
+            _SEARCH_HITS[ip] = hits
+            return False
+        hits.append(now)
+        _SEARCH_HITS[ip] = hits
+        return True
 
 
 @asynccontextmanager
@@ -134,6 +160,38 @@ def _session(request: Request, header: str | None):
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True, "app": "audioflow", "stats": manager.stats()}
+
+
+@app.get("/api/search")
+def search_catalog(
+    request: Request,
+    q: str = "",
+    types: str = "track,album,playlist",
+    limit: int = 12,
+) -> dict:
+    """Busca por nome no catálogo público — sem login, sem token de usuário."""
+    query = re.sub(r"\s+", " ", (q or "").strip())[:120]
+    if len(query) < 2:
+        return {"query": query, "results": []}
+    if not _allow_search(_client_ip(request)):
+        raise HTTPException(
+            status_code=429,
+            detail="Muitas buscas em pouco tempo. Aguarde um instante.",
+        )
+    kinds = tuple(
+        t.strip()
+        for t in (types or "").split(",")
+        if t.strip() in ("track", "album", "playlist")
+    ) or ("track", "album", "playlist")
+    try:
+        results = search_api.search(query, kinds=kinds, limit=limit)
+    except search_api.SearchError as exc:
+        log.warning("busca falhou: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Busca indisponível agora. Tente novamente em instantes.",
+        ) from exc
+    return {"query": query, "results": results}
 
 
 @app.get("/api/events")

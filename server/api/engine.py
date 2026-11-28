@@ -29,6 +29,7 @@ from urllib.parse import quote
 
 from audioflow.core import DownloadEngine
 from audioflow.spotify_api import SpotifyClient, parse_spotify_url
+from audioflow import search_api
 from audioflow.utils import FORMATS, QUALITIES, SAMPLE_RATES
 from audioflow.version import APP_VERSION
 
@@ -214,7 +215,11 @@ class Manager:
 
     def start(self, session: Session, url: str, settings: dict, ip: str) -> str:
         # valida o link antes de enfileirar (erro rápido para o usuário)
-        parse_spotify_url(url)
+        deezer = search_api.is_deezer_uri(url)
+        if deezer:
+            search_api.parse_deezer_uri(url)
+        else:
+            parse_spotify_url(url)
 
         # define formato/qualidade do job (site escolhe; default = m4a/192/auto)
         fmt = settings.get("format", "m4a")
@@ -267,14 +272,22 @@ class Manager:
 
                 # define nome do job baseado no link (álbum/playlist/faixa)
                 try:
-                    kind, item_id = parse_spotify_url(url)
-                    client = SpotifyClient()
-                    if kind == "track":
-                        track = client.get_track(item_id)
-                        session.job_name = f"{track.artists} - {track.title}"
+                    if deezer:
+                        meta = search_api.resolve_meta(url)
+                        session.job_name = (
+                            f"{meta.owner} - {meta.name}"
+                            if meta.owner
+                            else (meta.name or "Coleção")
+                        )
                     else:
-                        meta = client.get_collection_metadata(item_id, kind)
-                        session.job_name = meta.name or "Coleção"
+                        kind, item_id = parse_spotify_url(url)
+                        client = SpotifyClient()
+                        if kind == "track":
+                            track = client.get_track(item_id)
+                            session.job_name = f"{track.artists} - {track.title}"
+                        else:
+                            meta = client.get_collection_metadata(item_id, kind)
+                            session.job_name = meta.name or "Coleção"
                 except Exception:
                     session.job_name = "AudioFlow"
 
@@ -350,13 +363,14 @@ class Manager:
             })
             _progress(s)
 
-        def on_fail(track, _detail) -> None:
+        def on_fail(track, detail) -> None:
             s.done += 1
             s.emit({
                 "type": "track_fail",
                 "id": track.id,
                 "name": track.title,
                 "cover": track.cover_url,
+                "detail": str(detail or "")[:300],
             })
             _progress(s)
 
@@ -380,39 +394,53 @@ class Manager:
                 })
                 return
 
-            kind, item_id = parse_spotify_url(url)
-            if kind == "track":
-                s.total = 1
-            else:
-                meta = s.meta_cache.get(url)
-                if meta is None:
-                    meta = SpotifyClient().get_collection_metadata(item_id, kind)
-                    s.meta_cache[url] = meta
-                s.total = meta.track_count or None
-                s.emit({
-                    "type": "meta",
-                    "kind": kind,
-                    "name": meta.name or "Coleção",
-                    "total": meta.track_count or 0,
-                    "cover": meta.cover_url,
-                })
-                if s.cancelled:
-                    s.emit({
-                        "type": "finish",
-                        "summary": "Download cancelado.",
-                        "cancelled": True,
-                        "files": list(s.files),
-                    })
-                    return
-                if s.total and s.total > MAX_TRACKS:
+            resolved = None
+            if search_api.is_deezer_uri(url):
+                meta = search_api.resolve_meta(url)
+                if meta.track_count and meta.track_count > MAX_TRACKS:
                     s.emit({
                         "type": "error",
                         "message": (
-                            f"Este link tem {s.total} faixas. O limite do site "
+                            f"Esta coleção tem {meta.track_count} faixas. O limite do site "
                             f"é {MAX_TRACKS} por download."
                         ),
                     })
                     return
+                resolved = search_api.resolve(url, max_tracks=MAX_TRACKS)
+                s.total = len(resolved.tracks)
+                s.emit({
+                    "type": "meta",
+                    "kind": resolved.kind,
+                    "name": meta.name or "Coleção",
+                    "total": s.total,
+                    "cover": meta.cover_url,
+                })
+            else:
+                kind, item_id = parse_spotify_url(url)
+                if kind == "track":
+                    s.total = 1
+                else:
+                    meta = s.meta_cache.get(url)
+                    if meta is None:
+                        meta = SpotifyClient().get_collection_metadata(item_id, kind)
+                        s.meta_cache[url] = meta
+                    s.total = meta.track_count or None
+                    s.emit({
+                        "type": "meta",
+                        "kind": kind,
+                        "name": meta.name or "Coleção",
+                        "total": meta.track_count or 0,
+                        "cover": meta.cover_url,
+                    })
+                    if s.total and s.total > MAX_TRACKS:
+                        s.emit({
+                            "type": "error",
+                            "message": (
+                                f"Este link tem {s.total} faixas. O limite do site "
+                                f"é {MAX_TRACKS} por download."
+                            ),
+                        })
+                        return
 
             if s.cancelled:
                 s.emit({
@@ -434,7 +462,15 @@ class Manager:
                 })
                 return
             s.emit({"type": "progress", "percent": 0, "label": "Processando…"})
-            s.engine.scrape(url, str(out_dir))
+            if resolved is not None:
+                s.engine.scrape_tracks(
+                    resolved.tracks,
+                    resolved.collection,
+                    str(out_dir),
+                    use_folder=(resolved.kind != "track"),
+                )
+            else:
+                s.engine.scrape(url, str(out_dir))
         except Exception as exc:  # noqa: BLE001
             log.exception("falha no job %s", s.job_id)
             s.emit({"type": "error", "message": str(exc)})
@@ -508,6 +544,9 @@ class Manager:
             "summary": summary,
             "cancelled": s.cancelled,
             "files": list(s.files),
+            "ok": ok,
+            "skipped": skipped,
+            "failed": failed,
         }
         if s.job_id:
             payload["job"] = s.job_id
@@ -596,6 +635,7 @@ class WebApi:
             "tracknum": False,
             "platform": "web",
             "convert_formats": list(CONVERT_FORMATS),
+            "max_tracks": MAX_TRACKS,
             "watermark": {
                 "enabled": False,
                 "text": "",
@@ -611,6 +651,15 @@ class WebApi:
         return None
 
     def fetch_meta(self, url: str) -> dict:
+        if search_api.is_deezer_uri(url):
+            kind, _ = search_api.parse_deezer_uri(url)
+            meta = search_api.resolve_meta(url)
+            return {
+                "type": kind,
+                "name": meta.name or "Coleção",
+                "total": meta.track_count or (1 if kind == "track" else 0),
+                "cover": meta.cover_url,
+            }
         kind, item_id = parse_spotify_url(url)
         client = SpotifyClient()
         if kind == "track":

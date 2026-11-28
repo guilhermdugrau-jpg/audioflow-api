@@ -262,19 +262,6 @@ class DownloadEngine:
         fmt = self.audio_format
         base, _ = os.path.splitext(dest_path)
 
-        # Cookies opcionais (JSON do Chrome/Edge exportado via extensão)
-        cookies_file = os.environ.get("YTDLP_COOKIES_FILE")
-        if cookies_file and os.path.exists(cookies_file):
-            opts["cookiefile"] = cookies_file
-        # Cookies via variável de ambiente (conteúdo do cookies.txt)
-        cookies_text = os.environ.get("YTDLP_COOKIES")
-        if cookies_text:
-            import tempfile
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as cf:
-                cf.write(cookies_text)
-                cookies_file = cf.name
-                opts["cookiefile"] = cookies_file
-
         opts: dict = {
             "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio[ext=mp4]/bestaudio/best",
             "quiet": True,
@@ -301,6 +288,24 @@ class DownloadEngine:
             "sleep_interval": 1,
             "max_sleep_interval": 3,
         }
+
+        # Cookies opcionais (arquivo exportado ou conteúdo do cookies.txt).
+        # Ajuda quando o YouTube exige login em IPs de datacenter.
+        cookies_file = os.environ.get("YTDLP_COOKIES_FILE")
+        if not (cookies_file and os.path.exists(cookies_file)):
+            cookies_file = None
+        cookies_text = os.environ.get("YTDLP_COOKIES")
+        if cookies_text:
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", delete=False, encoding="utf-8"
+            ) as cf:
+                cf.write(cookies_text)
+                cookies_file = cf.name
+        if cookies_file:
+            opts["cookiefile"] = cookies_file
+
         try:
             import certifi
 
@@ -680,6 +685,37 @@ class DownloadEngine:
                 break
             tracks.append(track)
 
+        return self._run_tracks(tracks, meta, folder, resume_count)
+
+    def scrape_tracks(
+        self,
+        tracks: list[TrackInfo],
+        meta,
+        out_dir: str,
+        use_folder: bool = True,
+    ) -> int:
+        """Baixa faixas já resolvidas (busca por nome) reusando a conversão.
+
+        Recebe ``TrackInfo`` prontos (ex.: catálogo público do Deezer) e roda
+        exatamente o mesmo worker de ``_scrape_collection`` — a lógica de
+        áudio, tags e assinatura não muda.
+        """
+        self._reset()
+        os.makedirs(out_dir, exist_ok=True)
+        if not tracks:
+            if self.cb.on_finish:
+                self.cb.on_finish(0, 0, 0)
+            return 0
+        folder = self._folder_for(out_dir, meta) if use_folder else out_dir
+        return self._run_tracks(tracks, meta, folder, 0)
+
+    def _run_tracks(
+        self,
+        tracks: list[TrackInfo],
+        meta,
+        folder: str,
+        resume_count: int = 0,
+    ) -> int:
         ok = skipped = failed = 0
 
         def worker(track: TrackInfo, num: int) -> tuple[str, str, TrackInfo]:
