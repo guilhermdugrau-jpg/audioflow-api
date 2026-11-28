@@ -306,10 +306,17 @@ class DownloadEngine:
         if cookies_file:
             opts["cookiefile"] = cookies_file
 
-        # PO Token Provider (bgutil) — roda em localhost:4416 no container Railway
+        # PO Token Provider (bgutil) — opcional, só usa se estiver rodando
         pot_host = os.environ.get("POT_PROVIDER_HOST", "127.0.0.1")
         pot_port = os.environ.get("POT_PROVIDER_PORT", "4416")
         pot_url = f"http://{pot_host}:{pot_port}"
+        pot_available = False
+        try:
+            import urllib.request
+            urllib.request.urlopen(f"{pot_url}/health", timeout=2)
+            pot_available = True
+        except Exception:
+            pass
 
         try:
             import certifi
@@ -329,23 +336,30 @@ class DownloadEngine:
 
         expected = base + "." + fmt
 
-        # Múltiplas estratégias de player_client (ordem: mais resistentes primeiro)
-        player_clients = [
-            ["web"],                    # Mais resistente a bot detection
-            ["android", "web"],         # Combo comum
-            ["ios", "web"],             # iOS + web
-            ["tv", "web"],              # Smart TV + web
-            ["android", "ios", "tv"],   # Fallback original
-        ]
-
-        # Base extractor_args com PO Token Provider
+        # Base extractor args - po_token apenas se provider estiver disponível
         base_extractor = {
             "youtube": {
-                "po_token": pot_url,
                 "player_skip": ["configs", "webpage"],
                 "skip": ["hls", "dash"],
             }
         }
+        if pot_available:
+            base_extractor["youtube"]["po_token"] = pot_url
+
+        # Ordem de player clients: os mais resistentes a bot detection PRIMEIRO
+        # mweb (mobile web) e tv (smart TV) funcionam melhor em IPs de datacenter
+        player_clients = [
+            ["mweb"],                   # Mobile web - MAIS resistente
+            ["tv"],                     # Smart TV - muito resistente
+            ["web_embedded"],           # Embedded player - leve
+            ["android"],                # Android nativo
+            ["ios"],                    # iOS nativo
+            ["web"],                    # Web desktop - último recurso
+            ["android", "web"],         # Combos
+            ["ios", "web"],
+            ["tv", "web"],
+            ["android", "ios", "tv"],
+        ]
 
         # Estratégias de extractor_args
         extractor_strategies = []
@@ -359,82 +373,35 @@ class DownloadEngine:
         for strat in extractor_strategies:
             variants.append({**opts, "extractor_args": strat})
 
-        # Fallback: Invidious instances (usando extractor_args correto)
-        invidious_instances = [
-            "https://yewtu.be",
-            "https://invidious.snopyta.org",
-            "https://invidious.projectsegfau.lt",
-        ]
-        for inst in invidious_instances:
+        # Geo-bypass: tenta diferentes países
+        for country in ["US", "BR", "DE"]:
             variants.append({
                 **opts,
-                "extractor_args": {
-                    "youtube": {
-                        "player_client": ["web"],
-                        "invidious_instance": inst,
-                        "po_token": pot_url,
-                    }
-                },
-            })
-
-        # Fallback: Piped instances (extractor correto)
-        piped_instances = [
-            "https://piped.video",
-            "https://piped.kavin.rocks",
-            "https://piped.adminforge.de",
-        ]
-        for inst in piped_instances:
-            variants.append({
-                **opts,
-                "extractor_args": {
-                    "youtube": {
-                        "player_client": ["web"],
-                        "piped_instance": inst,
-                        "po_token": pot_url,
-                    }
-                },
-            })
-
-        # Geo-bypass: tenta diferentes países (apenas os principais)
-        for country in ["US", "BR"]:
-            variants.append({
-                **opts,
-                "extractor_args": {"youtube": {"player_client": ["web"], "po_token": pot_url}},
+                "extractor_args": {"youtube": {"player_client": ["mweb"]}},
                 "geo_bypass": True,
                 "geo_bypass_country": country,
             })
 
-        # Estratégia: embed player (mais leve, menos verificação)
-        variants.append({
-            **opts,
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["web_embedded"],
-                    "player_skip": ["configs", "webpage"],
-                    "skip": ["hls", "dash"],
-                    "po_token": pot_url,
-                }
-            },
-        })
+        # Estratégias combinadas: mweb + geo-bypass
+        for country in ["US", "BR"]:
+            variants.append({
+                **opts,
+                "extractor_args": {"youtube": {"player_client": ["mweb"]}},
+                "geo_bypass": True,
+                "geo_bypass_country": country,
+            })
 
-        # Estratégia: mweb (mobile web) - às vezes menos restrito
-        variants.append({
-            **opts,
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["mweb"],
-                    "player_skip": ["configs", "webpage"],
-                    "skip": ["hls", "dash"],
-                    "po_token": pot_url,
-                }
-            },
-        })
-
-        # Fallback final: formato mais flexível (ignora erros de formato)
+        # Fallback: formato mais flexível (ignora erros de formato)
         fallback_opts = {**opts}
         fallback_opts["format"] = "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio[ext=mp4]/bestaudio"
         fallback_opts["ignore_no_formats_error"] = True
         variants.append(fallback_opts)
+
+        # Fallback final: qualquer formato de áudio
+        fallback_opts2 = {**opts}
+        fallback_opts2["format"] = "bestaudio/best"
+        fallback_opts2["ignore_no_formats_error"] = True
+        variants.append(fallback_opts2)
 
         def _produced() -> str | None:
             if ffmpeg:
