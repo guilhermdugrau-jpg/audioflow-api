@@ -306,6 +306,11 @@ class DownloadEngine:
         if cookies_file:
             opts["cookiefile"] = cookies_file
 
+        # PO Token Provider (bgutil) — roda em localhost:19999 no container Railway
+        pot_host = os.environ.get("POT_PROVIDER_HOST", "127.0.0.1")
+        pot_port = os.environ.get("POT_PROVIDER_PORT", "19999")
+        pot_url = f"http://{pot_host}:{pot_port}"
+
         try:
             import certifi
 
@@ -333,16 +338,21 @@ class DownloadEngine:
             ["android", "ios", "tv"],   # Fallback original
         ]
 
+        # Base extractor_args com PO Token Provider
+        base_extractor = {
+            "youtube": {
+                "po_token": pot_url,
+                "player_skip": ["configs", "webpage"],
+                "skip": ["hls", "dash"],
+            }
+        }
+
         # Estratégias de extractor_args
         extractor_strategies = []
         for pc in player_clients:
-            extractor_strategies.append({
-                "youtube": {
-                    "player_client": pc,
-                    "player_skip": ["configs", "webpage"],  # Pula algumas verificações
-                    "skip": ["hls", "dash"],  # Evita formatos problemáticos
-                }
-            })
+            strat = {**base_extractor}
+            strat["youtube"]["player_client"] = pc
+            extractor_strategies.append(strat)
 
         # Variantes: cada estratégia de player + fallback sem extractor_args
         variants = [opts]
@@ -362,6 +372,7 @@ class DownloadEngine:
                     "youtube": {
                         "player_client": ["web"],
                         "invidious_instance": inst,
+                        "po_token": pot_url,
                     }
                 },
             })
@@ -379,6 +390,7 @@ class DownloadEngine:
                     "youtube": {
                         "player_client": ["web"],
                         "piped_instance": inst,
+                        "po_token": pot_url,
                     }
                 },
             })
@@ -387,7 +399,7 @@ class DownloadEngine:
         for country in ["US", "BR"]:
             variants.append({
                 **opts,
-                "extractor_args": {"youtube": {"player_client": ["web"]}},
+                "extractor_args": {"youtube": {"player_client": ["web"], "po_token": pot_url}},
                 "geo_bypass": True,
                 "geo_bypass_country": country,
             })
@@ -400,6 +412,7 @@ class DownloadEngine:
                     "player_client": ["web_embedded"],
                     "player_skip": ["configs", "webpage"],
                     "skip": ["hls", "dash"],
+                    "po_token": pot_url,
                 }
             },
         })
@@ -412,6 +425,7 @@ class DownloadEngine:
                     "player_client": ["mweb"],
                     "player_skip": ["configs", "webpage"],
                     "skip": ["hls", "dash"],
+                    "po_token": pot_url,
                 }
             },
         })
