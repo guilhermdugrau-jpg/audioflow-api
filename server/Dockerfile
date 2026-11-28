@@ -5,7 +5,7 @@ RUN git clone --single-branch --branch 2.0.2 https://github.com/Brainicism/bguti
     && npm ci \
     && npx tsc
 
-# Final stage
+# Final stage - cache bust: 2026-11-27
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
