@@ -5,7 +5,7 @@ RUN git clone --single-branch --branch 2.0.2 https://github.com/Brainicism/bguti
     && npm ci \
     && npx tsc
 
-# Final stage - cache bust: 2026-11-27
+# Final stage - cache bust: 2026-11-27-v2
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -28,12 +28,12 @@ WORKDIR /app
 COPY server/api/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-COPY audioflow /app/audioflow
-COPY server /app/server
-
-# Script de entrypoint que sobe o PO token provider + uvicorn
+# Script de entrypoint que sobe o PO token provider + uvicorn (copia antes para invalidar cache)
 COPY server/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+
+COPY audioflow /app/audioflow
+COPY server /app/server
 
 EXPOSE 8000
 
