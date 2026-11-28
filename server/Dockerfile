@@ -6,7 +6,7 @@ RUN git clone --single-branch --branch 2.0.2 https://github.com/Brainicism/bguti
     && npx tsc
 
 # Final stage
-ARG CACHE_BUST=2026112702
+ARG CACHE_BUST=2026112703
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -19,6 +19,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # ffmpeg para conversão de áudio (MP3/FLAC/WAV), espeak-ng para TTS, curl para healthcheck
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg espeak-ng curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Build info
+RUN echo "=== BUILD: $(date) ===" && echo "CACHE_BUST=$CACHE_BUST"
 
 # Copy built POT provider from build stage
 COPY --from=pot-provider /pot/build /app/pot-provider
