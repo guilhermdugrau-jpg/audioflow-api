@@ -6,7 +6,7 @@ RUN git clone --single-branch --branch 2.0.2 https://github.com/Brainicism/bguti
     && npx tsc
 
 # Final stage
-ARG CACHE_BUST=2026112701
+ARG CACHE_BUST=2026112702
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
